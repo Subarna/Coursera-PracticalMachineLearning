@@ -1,0 +1,122 @@
+title: "Coursera-PracticalMachineLearning - Write Up"
+author: "Subarna"
+date: "19 September 2015"
+
+Background and Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks.
+
+The goal of this project is to predict the manner in which the participants did the exercise. This is the classe variable of the training set, which classifies the correct and incorrect outcomes into A, B, C, D, and E categories. This report describes how the model for the project was built, its cross validation, expected out of sample error calculation, and the choices made. It was used successfully to accurately predict all 20 different test cases on the Coursera website.
+
+Write Up
+This document describe the analysis done for the prediction assignment of the practical machine learning course.
+The first part of the anlaysis is to read the training and test data sets. These are csv files. 
+
+
+```{r}
+training = read.csv("pml-training.csv")
+test = read.csv("pml-testing.csv")
+```
+
+We take a quick look at the data and particularly at classe which is the variable we need to predict:
+
+```{r}
+str(training)
+```
+
+With the first look in the training data, we can find out there are several fields that contains alot of missing values. As a next step we will take a look at the % of missing values in the data for each field.
+
+```{r}
+Nmiss = apply(training,2,function(x){(sum(is.na(x)))/nrow(training)})
+```
+
+We will remove the variables that contain 60% or more missing values.This variable reduction will reduce the number of variables from 160 to 93. We also remove the variables which are in the data only for description and may not add any value into the model.
+
+```{r}
+training_v2 = training[,which(Nmiss < .60)]
+training_V3 = training_v2[,7:93]
+```
+
+Before we can move forward with data analysis, we split the training set into two for cross validation purposes. We randomly subsample 70% of the set for training purposes (actual model building), while the 30% remainder will be used only for testing, evaluation and accuracy measurement.For this we intitiate caret library and use createDataPartition function.
+
+```{r}
+library(caret)
+set.seed(1988)
+indx = createDataPartition(y = training_V3$classe, p=0.7, list=FALSE)
+training_v4 = training_V3[indx,]
+training_test = training_V3[-indx,]
+```
+
+Next we will remove the variables with less or no variation in the data. We can now [i] identify the “zero covariates” from training_v4 and [ii] remove these “zero covariates” from both training_v4 and training_test.
+
+```{r}
+nzv = nearZeroVar(training_v4)
+if(length(nzv) > 0){
+  training_v4 = training_v4[,-nzv]
+  training_test = training_test[,-nzv]
+}
+```
+
+We will use Random Forest to reduce the number of variables further. We will use Random Forest Package for this. This is to investigate relative importance of the variables by checking the output of Random Forest.
+
+```{r}
+library(randomForest)
+set.seed(1988)
+Mf <- randomForest(training_v4$classe~., data=training_v4, importance=TRUE, ntree=100)
+```
+```{r, echo=FALSE}
+varImpPlot(Mf)
+```
+
+Using the Accuracy and Gini graphs above, 
+we select the top 10 variables that we’ll use for model building. 
+If the accuracy of the resulting model is acceptable, limiting the number of variables is a good idea to ensure readability and interpretability of the model. 
+A model with 10 parameters is certainly much more user friendly than a model with 53 parameters.
+Our 10 covariates are: yaw_belt, roll_belt, num_window, pitch_belt, magnet_dumbbell_y,
+magnet_dumbbell_z, pitch_forearm, accel_dumbbell_y, roll_arm, and roll_forearm.
+
+As a next step, we will analyse the correlation fo these variables.
+
+```{r}
+keepvars = c("classe","yaw_belt","roll_belt","num_window","pitch_belt","magnet_dumbbell_z",
+             "magnet_dumbbell_y","pitch_forearm","accel_dumbbell_y","roll_arm","roll_forearm")
+correl = cor(training_v4[,c("yaw_belt","roll_belt","num_window","pitch_belt","magnet_dumbbell_z",
+             "magnet_dumbbell_y","pitch_forearm","accel_dumbbell_y","roll_arm","roll_forearm")])
+diag(correl) <- 0
+which(abs(correl)>0.75, arr.ind=TRUE)
+training_v5 = training_v4[,keepvars]
+```
+
+From the output of correl, we found roll_belt and yaw_belt have high correlation present.
+As a result, we will use PCA in our random forest model. We will use Caret package for this.
+
+```{r}
+modf <- train(classe~.,
+                  data=training_v5,
+                  method="rf", preProcess="pca",
+                  trControl=trainControl(method="cv",number=2),
+                  prox=TRUE,
+                  verbose=TRUE,
+                  allowParallel=TRUE)
+```
+
+How accurate is this model?
+
+```{r}
+predictions <- predict(modf, newdata=training_test)
+confusionMatrix(predictions, training_test$classe)
+```
+
+Estimation of the out-of-sample error rate
+
+```{r}
+missClass = function(values, predicted) {
+  sum(predicted != values) / length(values)
+}
+OOS_errRate = missClass(training_test$classe, predictions)
+OOS_errRate
+```
+
+
+Model seems to be 96% accurate which is good enough on the testing data cut out from the training data.\
+Model predicts 18/20 coursera outputs.
+
